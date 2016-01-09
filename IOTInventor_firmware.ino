@@ -21,6 +21,8 @@
 // have been corrupted.  Other corruption can result in command responses being corrupted due to the sprintf format strings being whacked.
 //
 // 
+// Version 0.8.3   Fixed bug in tone output through beeper that was broken when decToBin or something was modified and also
+//                 the pinValue was being capped at MAX_PINS value instead of 1023 or possibly we should set it higher
 // Version 0.8.2   Fixed bug in _sprintf for floats that would add characters from the stale buffer to the end
 //                 of a formatted float.  Added optional int digits "%f8" and optional int and frac digits "%f7.2" support.
 // Version 0.8.1 - Fixed MatchCommand which was not accepting reliable mode commands
@@ -56,10 +58,10 @@
 //
 // Commands:
 //   to reset the firmware serial input command buffer use: '~' which responds "{~}"
-//   to reset the firmware state and hardware use: "{reset}" or "{reset:4d7a}" which responds "{reset}"
+//   to reset the firmware state and hardware use: "{reset}" or "{reset:xxxx}" which responds "{reset}"
 //   to reset the time and interrupt time tracking variables use: "{s t 0}" which responds "{s t 0}"
 //   to get the time use: "{g t}" which responds "{g t 48100}" indicating the time since reset is 48.1 seconds
-//   to get the firmware version use: "{g v}"  which responds "{'name':'IOT Inventor'; 'board':'Arduino Mega2560'; 'firmware':'0.8.2'}"
+//   to get the firmware version use: "{g v}"  which responds "{'name':'IOT Inventor'; 'board':'Arduino Mega2560'; 'firmware':'0.8.3'}"
 //
 //   to set pin mode use: "{s pin mode}" which responds "{s pin mode}" 
 //   to set pin value use: "{s 123 i}"   which responds "{illegal pin}"
@@ -154,13 +156,13 @@ long MeasureInCentimeters(unsigned char pin);
 #define ARDUINO_MEGA
 
 #ifdef ARDUINO_UNO
-#define FIRMWARE_VERSION "'name':'IOT Inventor'; 'board':'Arduino Uno'; 'firmware':'0.8.2'"
+#define FIRMWARE_VERSION "'name':'IOT Inventor'; 'board':'Arduino Uno'; 'firmware':'0.8.3'"
 #define I2C_SCL 74  // 70 is analog offset plus 4 as pin A4 is SCL
 #define I2C_SDA 75  // 70 is analog offset plus 5 as pin A5 is SDA
 #endif
 
 #ifdef ARDUINO_MEGA
-#define FIRMWARE_VERSION "'name':'IOT Inventor'; 'board':'Arduino Mega 2560'; 'firmware':'0.8.2'"
+#define FIRMWARE_VERSION "'name':'IOT Inventor'; 'board':'Arduino Mega 2560'; 'firmware':'0.8.3'"
 #define I2C_SCL 90  // 70 is special offset plus 20 as pin D20 is SCL
 #define I2C_SDA 91  // 70 is special offset plus 21 as pin D21 is SDA
 #endif
@@ -510,7 +512,7 @@ void dispatchCommand (unsigned char commandLength) {
 
     if (('0' <= commandBuffer[index]) && ('9' >= commandBuffer[index]) ) {
       pinValue  = decToInt(&index);
-      if (pinValue >= MAX_PINS) {
+      if (pinValue > 1023) {
         printFrame("illegal pin value");
         return;
       }
@@ -544,7 +546,7 @@ void dispatchCommand (unsigned char commandLength) {
   
         case 't':
           duration = decToInt(&index);
-          tone(pinNumber, pinValue, (duration != -1) ? duration : 500 );              
+          tone(pinNumber, pinValue, (duration > 100) ? duration : 100 );              
           if (-1 == duration)
             _sprintf(outputBuffer, sUU, pinNumber, pinValue);
           else
@@ -1024,36 +1026,37 @@ int decToInt(unsigned char * index) {
 
   returnValue = 0;
   letter = commandBuffer[*index];
-
-  for (count = 0; count < 4; count++)
+  
+  if (('0' <= letter) && ('9' >= letter) )
   {
-    if (('0' <= letter) && ('9' >= letter) )
+    for (count = 0; count < 4; count++)
     {
-      returnValue = returnValue * 10;
-      returnValue += letter - '0';
-      (*index)++;
-      letter = commandBuffer[*index];
-    }
-    else {
-      if ((' ' == letter) || (':' == letter) ) {  // if the scanner hits a space, colon advance index and exit successfully
+      if (('0' <= letter) && ('9' >= letter) )
+      {
+        returnValue = returnValue * 10;
+        returnValue += letter - '0';
         (*index)++;
-        goto exit;
-      } else {
-        if (0 == letter) {    // if the scanner hits a null just exit successfully
-          goto exit;
-        } else {
-          returnValue = -1;
-          goto exit;
-        }
+        letter = commandBuffer[*index];
       }
+      else
+        break;
     }
   }
+  else
+  {
+    returnValue = -1;
+    goto exit;
+  }
+  
+  if ((' ' == letter) || (':' == letter) )  // if the scanner hits a space, colon advance index and exit successfully
+     (*index)++;
+
 exit:
   return (returnValue);
 }
 
 //---------------------------------------------------------------------
-// Binary to decimal numeric format routines for 16 and 32 bit signed and unsigned values
+// Binday to decimal numeric format routines for 16 and 32 bit signed and unsigned values
 uint8_t * format_s16(int16_t value, uint8_t * buffer)
 {
   if (value < 0) {
